@@ -204,4 +204,16 @@ function reset() {
     $(".selection-reveal").hide();
     $("#feedback").empty();
 }
-
+function updateStats() {
+    for (var i = 1; i<=2; i++){
+        var obj = window["player"+ i + "Object"];
+        $("#p" + i + "-wins").text(obj.wins);
+        $("#p" + i + "-losses").text(obj.losses);
+    }
+    player1LoggedIn ? $(".p1-stats").show() : $(".p1-stats").hide();
+    player2LoggedIn ? $(".p2-stats").show() : $(".p2-stats").hide();
+}
+function showSelections() {
+    $(".selections, .pending-selection, .selection-made").hide();
+    $(".selection-reveal").show();
+}
