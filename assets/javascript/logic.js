@@ -9,89 +9,199 @@ var firebaseConfig = {
   };
 firebase.initializeApp(firebaseConfig);
 
-var database = firebase.database();
-var playerName;
-var player1Logged = false;
-var player2Logged = false;
-var playerNumber;
-var player;
+var db = firebase.database();
+var playersRef = db.ref("/players");
+var chatRef = db.ref("/chat");
+var connectedRef = db.ref(".info/connected");
+var playerName,
+    player1LoggedIn = false,
+    player2LoggedIn = false,
+    playerNumber,
+    playerObject,
+    player1Object = {
+        name: "",
+        choice: "",
+        wins: 0,
+        losses: 0
+    },
+    player2Object = {
+        name: "",
+        choice: "",
+        wins: 0,
+        losses: 0
+    },
+    resetId;
 
-var player1 = {
-    choice: "",
-    wins: 0,
-    losses: 0
-};
-var player2 = {
-    choice: "",
-    wins: 0,
-    losses: 0
-};
-var loginFunc = function(){
-$('#login').on('click', function(event){
-    event.preventDefault();
-    
-    if (player1Logged == false){
-       
-        //player1.name = $('#name').val().trim();
-        playerName = $('#name').val().trim();
-        player = player1;
-        player1Logged = true;
-        database.ref(playerName).set(player);
-    }
-       else{
-       
-        //player2.name = $('#name').val().trim();
-        playerName = $('#name').val().trim();
-        player = player2;
-        player2Logged = true;
-        database.ref(playerName).set(player);
-    }
+// when player is added
+playersRef.on("child_added", function (childSnap) {
+    window["player" + childSnap.key + "LoggedIn"] = true;
+    window["player" + childSnap.key + "Object"] = childSnap.val();
+}, errorHandler);
 
-});
-};
+// when player is changed
+playersRef.on("child_changed", function (childSnap) {
+    window["player" + childSnap.key + "Object"] = childSnap.val();
 
-var selecFunc = function(){
-$('.selection').on('click',function(){
-    player1.choice = this.id;
-    database.ref(playerName).set(player1);
-    player2.choice = this.id;
-    database.ref(playerName).set(player2);
-});
-//database.ref().on('value',function(snapshot){
-//    var choices = snapshot.val();
-//    var key = Object.keys(choices);
-//    console.log(key);
-//});
-};
+    updateStats();
+}, errorHandler);
 
-var compare = function(p1choice,p2choice){
-    database.ref().on('value',function(snapshot){
-        var arr = Object.entries(snapshot.val());
-        p1choice = arr[0][1].choice;
-        p2choice = arr[1][1].choice;
-        var p1name = arr[0][0];
-        var p2name = arr[1][0];
-    
-        if (p1choice === p2choice){
-            $('#result').text("Draw");
-        } else if ((p1choice == "rock" && p2choice == "scissors") || (p1choice == "paper" && p2choice == "rock") || (p1choice == "scissors" && p2choice == "paper")){
-            $('#result').text(p1name +' beats the crap out of '+p2name);
-        } else {
-            $('#result').text(p2name +" beats the shit out of "+p1name);
-        }
+// when player is removed
+playersRef.on("child_removed", function (childSnap) {
+    chatRef.push({
+        userId: "system",
+        text: childSnap.val().name + " has disconnected"
     });
+
+    window["player" + childSnap.key + "LoggedIn"] = false;
+    window["player" + childSnap.key + "Object"] = {
+        name: "",
+        choice: "",
+        wins: 0,
+        losses: 0
     };
-var gameLogic = function (){
-    loginFunc();
-    selecFunc();
-    database.ref().on('value',function(snapshot){
-        var arr = Object.entries(snapshot.val());
-        var p1Choice = arr[0][1].choice;
-        var p2Choice = arr[1][1].choice
-    console.log(arr[0][1].choice);
-    console.log(arr[1][1].choice);
-    compare(p1Choice, p2Choice);
-    console.log(arr);
+}, errorHandler);
+
+// when general changes are made, perform game logic
+playersRef.on("value", function (snap) {
+    // update the player names
+    $("#player-1").text(player1Object.name || "Waiting for Player 1");
+    $("#player-2").text(player2Object.name || "Waiting for Player 2");
+
+    // display correct "screen" depending on logged in statuses
+    if (player1LoggedIn && player2LoggedIn && !playerNumber) {
+        loginPending();
+    } else if (playerNumber) {
+        showLoggedInScreen();
+    } else {
+        showLoginScreen();
+    }
+
+    // if both players have selected their choice, perform the comparison
+    if (player1Object.choice && player2Object.choice) {
+        rps(player1Object.choice, player2Object.choice);
+    }
+
+}, errorHandler);
+
+
+
+
+// when the login button is clicked, add the new player to the open player slot
+$("#login").click(function (e) {
+    e.preventDefault();
+
+    // check to see which player slot is available
+    if (!player1LoggedIn) {
+        playerNumber = "1";
+        playerObject = player1Object;
+    }
+    else if (!player2LoggedIn) {
+        playerNumber = "2";
+        playerObject = player2Object;
+    }
+    else {
+        playerNumber = null;
+        playerObject = null;
+    }
+
+    // if a slot was found, update it with the new information
+    if (playerNumber) {
+        playerName = $("#player-name").val().trim();
+        playerObject.name = playerName;
+        $("#player-name").val("");
+
+        $("#player-name-display").text(playerName);
+        $("#player-number").text(playerNumber);
+
+        db.ref("/players/" + playerNumber).set(playerObject);
+        db.ref("/players/" + playerNumber).onDisconnect().remove();
+    }
 });
-};
-gameLogic();
+
+// when a selection is made, send it to the database
+$(".selection").click(function () {
+    // failsafe for if the player isn't logged in
+    if (!playerNumber) return;
+
+    playerObject.choice = this.id;
+    db.ref("/players/" + playerNumber).set(playerObject);
+
+    $(".p" + playerNumber + "-selections").hide();
+    $(".p" + playerNumber + "-selection-reveal").text(this.id).show();
+});
+
+
+function errorHandler(error) {
+    console.log("Error:", error.code);
+}
+
+
+function loginPending() {
+    $(".pre-connection, .pre-login, .post-login, .selections").hide();
+    $(".pending-login").show();
+}
+
+function showLoginScreen() {
+    $(".pre-connection, .pending-login, .post-login, .selections").hide();
+    $(".pre-login").show();
+}
+
+function showLoggedInScreen() {
+    $(".pre-connection, .pre-login, .pending-login").hide();
+    $(".post-login").show();
+    if (playerNumber == "1") {
+        $(".p1-selections").show();
+    } else {
+        $(".p1-selections").hide();
+    }
+    if (playerNumber == "2") {
+        $(".p2-selections").show();
+    } else {
+        $(".p2-selections").hide();
+    }
+}
+
+function rps(p1choice, p2choice) {
+    $(".p1-selection-reveal").text(p1choice);
+    $(".p2-selection-reveal").text(p2choice);
+
+    showSelections();
+
+    if (p1choice == p2choice) {
+        //tie
+        $("#feedback").text("TIE");
+    }
+    else if ((p1choice == "rock" && p2choice == "scissors") || (p1choice == "paper" && p2choice == "rock") || (p1choice == "scissors" && p2choice == "paper")) {
+        // p1 wins
+        $("#feedback").html("<small>" + p1choice + " beats " + p2choice + "</small><br/><br/>" + player1Object.name + " wins!");
+
+        if (playerNumber == "1") {
+            playerObject.wins++;
+        } else {
+            playerObject.losses++;
+        }
+    } else {
+        // p2 wins
+        $("#feedback").html("<small>" + p2choice + " beats " + p1choice + "</small><br/><br/>" + player2Object.name + " wins!");
+
+        if (playerNumber == "2") {
+            playerObject.wins++;
+        } else {
+            playerObject.losses++;
+        }
+    }
+
+    resetId = setTimeout(reset, 3000);
+}
+
+function reset() {
+    clearTimeout(resetId);
+
+    playerObject.choice = "";
+
+    db.ref("/players/" + playerNumber).set(playerObject);
+
+    $(".selection-reveal").hide();
+    $("#feedback").empty();
+}
+
